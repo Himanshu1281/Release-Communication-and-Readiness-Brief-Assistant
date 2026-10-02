@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Runtime: pooled connection on Vercel. Migrations need a direct (unpooled) connection,
+  // because PgBouncer's transaction mode can't hold the advisory lock prisma migrate uses.
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model Release {
+  id        String           @id @default(cuid())
+  name      String
+  createdAt DateTime         @default(now())
+  versions  ReleaseVersion[]
+}
+
+model ReleaseVersion {
+  id            String        @id @default(cuid())
+  releaseId     String
+  release       Release       @relation(fields: [releaseId], references: [id])
+  versionNumber Int
+  package       Json // immutable snapshot
+  itemHashes    Json // { "F-1": "sha256...", ... }
+  checkResults  Json // deterministic check output
+  readiness     Readiness     @default(DRAFT) // only changed by the human readiness endpoint
+  readinessBy   String?
+  readinessAt   DateTime?
+  createdAt     DateTime      @default(now())
+  runs          AnalysisRun[]
+  statements    Statement[]
+  briefs        Brief[]
+
+  @@unique([releaseId, versionNumber])
+}
+
+enum Readiness {
+  DRAFT
+  READY_FOR_RELEASE
+  NOT_READY
+}
+
+model AnalysisRun {
+  id         String         @id @default(cuid())
+  versionId  String
+  version    ReleaseVersion @relation(fields: [versionId], references: [id])
+  status     RunStatus
+  model      String
+  promptVer  String
+  promptHash String? // sha256 of the prompt files actually sent
+  durationMs Int?
+  error      String?
+  rawOutput  Json?
+  createdAt  DateTime       @default(now())
+  statements Statement[]
+}
+
+enum RunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model Statement {
+  id          String         @id @default(cuid())
+  versionId   String
+  version     ReleaseVersion @relation(fields: [versionId], references: [id])
+  runId       String?
+  run         AnalysisRun?   @relation(fields: [runId], references: [id])
+  kind        StatementKind
+  impact      Impact?
+  severity    Severity? // RISK statements only
+  text        String // AI original
+  editedText  String? // human edit
+  citations   Json // [{ itemId, hash }] hash captured at generation time
+  uncited     Boolean        @default(false) // must be edited before approval
+  status      ReviewStatus   @default(PENDING)
+  stale       Boolean        @default(false)
+  staleReason String?
+  carriedFrom String? // statement id from previous version
+  reviewedAt  DateTime?
+  createdAt   DateTime       @default(now())
+}
+
+enum StatementKind {
+  CLASSIFICATION
+  GAP
+  UNSUPPORTED_CLAIM
+  RISK
+  TECH_SUMMARY
+  STAKEHOLDER_SUMMARY
+}
+
+enum Impact {
+  HIGH
+  MEDIUM
+  LOW
+  NONE
+}
+
+enum Severity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Brief {
+  id           String         @id @default(cuid())
+  versionId    String
+  version      ReleaseVersion @relation(fields: [versionId], references: [id])
+  markdown     String
+  statementIds Json
+  createdAt    DateTime       @default(now())
+}
